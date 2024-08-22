@@ -6,8 +6,8 @@ import time
 
 import tensorflow as tf
 import torch
-from pypots.clustering.vader import VaDER
-
+# from pypots.clustering.vader import VaDER
+from model_modified import VaDER
 from analytics import *
 from config import *  # Import global parameters
 
@@ -135,7 +135,7 @@ if 'clustering' in imputed_data:
     cluster_assignments = imputed_data['clustering']
     print("Cluster assignments (first 5):", cluster_assignments[:5])
 
-    # Create a DataFrame with unique medical records and their cluster assignments
+    # Create a DataFrame with unique medical records as and their cluster assignments
     unique_records = pd.DataFrame({
         'Medical_Record': pivoted_data.index,
         'Cluster': cluster_assignments
@@ -165,7 +165,7 @@ first_dim_index = data['Medical_Record'].unique()
 second_dim_index = np.arange(1, latent_vars_shape[1]+1)
 
 # Create a MultiIndex
-index = pd.MultiIndex.from_product([first_dim_index, second_dim_index], names=['medical_Record', 'day_in_cycle'])
+index = pd.MultiIndex.from_product([first_dim_index, second_dim_index], names=['Medical_Record', 'day_in_cycle'])
 
 # Flatten the array
 flattened_array = imputation_data_df.reshape(-1, N_FEATURES)
@@ -173,9 +173,16 @@ flattened_array = imputation_data_df.reshape(-1, N_FEATURES)
 # Create the DataFrame
 columns = ['estro', 'prog', 'lh'] if WITH_LH else ['estro', 'prog']
 imputation_data_df = pd.DataFrame(flattened_array, index=index, columns=columns)
-imputation_data_df['cluster'] = cluster_assignments
+# Ensure that the MultiIndex aligns by reindexing 'unique_records' to match 'imputation_data_df'
+# Create a MultiIndex for unique_records to match imputation_data_df
+unique_records_multiindex = unique_records.set_index('Medical_Record').reindex(imputation_data_df.index.levels[0])
 
+# Now assign the cluster based on the reindexed unique_records
+imputation_data_df['cluster'] = unique_records_multiindex['Cluster'].values.repeat(MAX_DAYINCYCLE)
+
+# Save the DataFrame to a CSV file
 imputation_data_df.to_csv(f'imputation_data_df_{CURRENT_TIME}.csv')
+
 # Plot data (optional)
 # plot_data(pivoted_data)
 
