@@ -1,4 +1,3 @@
-import logging
 import os
 import pickle
 import random
@@ -6,10 +5,15 @@ import time
 
 import tensorflow as tf
 import torch
+
+from Evaluation import *
 # from pypots.clustering.vader import VaDER
-from model_modified import VaDER
 from analytics import *
+from dl_project.model_modified import VaDER
+from utils import *
 from config import *  # Import global parameters
+
+from hyperparameter_tuning import *
 
 pd.reset_option('display.max_columns')
 
@@ -51,16 +55,8 @@ else:
 file_path = 'ToStim.csv'  # Replace with the actual path to your CSV file
 data = load_and_preprocess_data(file_path)
 
-# for ran's data
-# data = pd.read_csv(file_path)
-# data = data[['Medical_Record', 'DayInCycle', 'Estrogen', 'LH', 'Progesterone']]
-# print(data.head(10), data.shape)
-
-print_data_statistics(data)
-
 # Pivot data
 pivoted_data = pivot_data(data)
-
 # Check for any NaN values in the pivoted data
 logging.info(f"Number of NaN values in the pivoted data: {pivoted_data.isna().sum().sum()}")
 
@@ -79,17 +75,18 @@ check_for_nan(data_array)
 
 # Scale the data (with the intialized values)
 # Normalize the data
-if NORMALIZE_DATA:
-    data_array = normalize_data(data_array)
+if NORMALIZATION_METHOD is not None:
+    data_array = normalize_data(data_array, method=NORMALIZATION_METHOD)
 
 # Prepare the data in the expected format
 dataset = {'X': data_array, 'missing_mask': mask}
+
 
 # Use GPU device if available
 device = '/GPU:0' if tf.config.list_physical_devices('GPU') else '/CPU:0'
 
 # Constructing features means and cov for the GMM, change the parameter to False to use gmm's approximated stats
-gmm_means, gmm_covariances = means_covs_for_gmm(USE_PRIOR_MEAN_AND_STD)
+gmm_means, gmm_covariances = means_stds_for_gmm(USE_PRIOR_MEAN_AND_STD)
 
 # find the .pkl file in the current directory, which is named like '.pkl'
 def find_pkl_file():
@@ -107,12 +104,24 @@ if model_path is not None:
 else:
     # Initialize and fit the VaDER model if it doesn't exist
     with tf.device(device):
+        if USE_PRIOR_MEAN_AND_STD:
+
+            gmm_means = gmm_means.flatten().reshape(1,-1)
+            gmm_covariances = gmm_covariances.flatten().reshape(1,-1)
+
+            gmm_means = np.tile(gmm_means, (N_CLUSTERS, 1))
+            gmm_covariances = np.tile(gmm_covariances, (N_CLUSTERS, 1))
+
+            gmm_covariances = None
+
         vader = VaDER(n_steps=N_STEPS, n_features=N_FEATURES, n_clusters=N_CLUSTERS,
                       rnn_hidden_size=RNN_HIDDEN_SIZE, d_mu_stddev=D_MU_STDDEV,
                       epochs=EPOCHS, gmm_means = gmm_means, gmm_covs=gmm_covariances) #,saving_path = f'run_of_{CURRENT_TIME}'
 
+
         # Fit the VaDER model
         vader.fit(dataset)
+
 
         # Save the fitted model to disk
         with open(f'vader_model_{CURRENT_TIME}.pkl', 'wb') as file:
@@ -123,67 +132,94 @@ else:
 # Predict the imputed data
 try:
     imputed_data = vader.predict(dataset, return_latent_vars = True)
+    if imputed_data is None: #hadas
+        raise ValueError("Prediction failed, `imputed_data` is None.")#hadas
 except AssertionError as e:
     logging.error(f"AssertionError during prediction: {e}")
     print(f"AssertionError during prediction: {e}")
+    imputed_data = None #hadas
 
-# Inspect the keys of the returned dictionary
-print("Keys in imputed_data:", imputed_data.keys())
+
+# Extract the cluster labels from the 'clustering' key
+labels = imputed_data.get('clustering')
+
+# Check if labels were correctly extracted
+if labels is None:
+    raise ValueError("The 'clustering' key in the predictions dictionary returned None. Check the predict method output and key names.")
+
+# If labels are correctly extracted, print their shape
+print(f"Shape of labels: {labels.shape}")
+print(f"Labels: {labels}")
+
+
+# Ensure that labels is a 1D array before passing it to the function
+if labels.ndim != 1:
+    raise ValueError(f"Expected labels to be a 1D array, but got shape {labels.shape}")
+#hadas
+ground_truth = None  # Replace with actual ground truth if available
+# Evaluate clustering
+evaluation_results = evaluate_clustering(dataset, labels, ground_truth)
+print(evaluation_results)
+logging.info(f"Clustering Evaluation Results:\n{evaluation_results}")
 
 # Extract and print cluster assignments
-if 'clustering' in imputed_data:
-    cluster_assignments = imputed_data['clustering']
-    print("Cluster assignments (first 5):", cluster_assignments[:5])
+if imputed_data is not None: #hadas
+    # Evaluate normalization
+    #if NORMALIZE_DATA: evaluate_normalization(normalized_array=imputed_data, original_array=dataset) # hadas
+    if 'clustering' in imputed_data:
+        cluster_assignments = imputed_data['clustering']
+        print("Cluster assignments (first 5):", cluster_assignments[:5])
 
-    # Create a DataFrame with unique medical records as and their cluster assignments
-    unique_records = pd.DataFrame({
-        'Medical_Record': pivoted_data.index,
-        'Cluster': cluster_assignments
-    })
+        # Create a DataFrame with unique medical records as and their cluster assignments
+        unique_records = pd.DataFrame({
+            'Medical_Record': pivoted_data.index,
+            'Cluster': cluster_assignments
+        })
 
-    # Save the unique_records DataFrame with cluster assignments to a CSV file
-    unique_records.to_csv(f'unique_records_with_clusters_{CURRENT_TIME}.csv', index=False)
-    print(f"Unique records with clusters saved to 'unique_records_with_clusters{CURRENT_TIME}.csv'")
 
-    # Calculate cluster sizes
-    cluster_sizes = unique_records['Cluster'].value_counts()
-    print("Cluster sizes:\n", cluster_sizes)
+        # Save the unique_records DataFrame with cluster assignments to a CSV file
+        unique_records.to_csv(f'unique_records_with_clusters_{CURRENT_TIME}.csv', index=False)
+        print(f"Unique records with clusters saved to 'unique_records_with_clusters{CURRENT_TIME}.csv'")
 
-else:
-    print("No clustering key found in imputed_data")
+        # Calculate cluster sizes
+        cluster_sizes = unique_records['Cluster'].value_counts()
+        print("Cluster sizes:\n", cluster_sizes)
 
-latent_vars = imputed_data['latent_vars']
-print('imputations = ', latent_vars['imputation_latent'])
-imputation_data_df = latent_vars['imputation_latent']
-latent_vars_shape = imputation_data_df.shape
-print(f"""shape of latent vars = {latent_vars_shape}""")
-# Print the shapes to debug
-print(f"Shape of pivoted_data: {pivoted_data.shape}")
+    else:
+        print("No clustering key found in imputed_data")
 
-# Create the index
-first_dim_index = data['Medical_Record'].unique()
-second_dim_index = np.arange(1, latent_vars_shape[1]+1)
+    latent_vars = imputed_data['latent_vars']
+    # print('imputations = ', latent_vars['imputation_latent'])
+    imputation_data_df = latent_vars['imputation_latent']
+    latent_vars_shape = imputation_data_df.shape
+    print(f"""shape of latent vars = {latent_vars_shape}""")
+    # Print the shapes to debug
+    print(f"Shape of pivoted_data: {pivoted_data.shape}")
 
-# Create a MultiIndex
-index = pd.MultiIndex.from_product([first_dim_index, second_dim_index], names=['Medical_Record', 'day_in_cycle'])
+    # Create the index
+    first_dim_index = data['Medical_Record'].unique()
+    second_dim_index = np.arange(1, latent_vars_shape[1]+1)
 
-# Flatten the array
-flattened_array = imputation_data_df.reshape(-1, N_FEATURES)
+    # Create a MultiIndex
+    index = pd.MultiIndex.from_product([first_dim_index, second_dim_index], names=['Medical_Record', 'day_in_cycle'])
 
-# Create the DataFrame
-columns = ['estro', 'prog', 'lh'] if WITH_LH else ['estro', 'prog']
-imputation_data_df = pd.DataFrame(flattened_array, index=index, columns=columns)
-# Ensure that the MultiIndex aligns by reindexing 'unique_records' to match 'imputation_data_df'
-# Create a MultiIndex for unique_records to match imputation_data_df
-unique_records_multiindex = unique_records.set_index('Medical_Record').reindex(imputation_data_df.index.levels[0])
+    # Flatten the array
+    flattened_array = imputation_data_df.reshape(-1, N_FEATURES)
 
-# Now assign the cluster based on the reindexed unique_records
-imputation_data_df['cluster'] = unique_records_multiindex['Cluster'].values.repeat(MAX_DAYINCYCLE)
+    # Create the DataFrame
+    columns = ['estro', 'prog', 'lh'] if WITH_LH else ['estro', 'prog']
+    imputation_data_df = pd.DataFrame(flattened_array, index=index, columns=columns)
+    # Ensure that the MultiIndex aligns by reindexing 'unique_records' to match 'imputation_data_df'
+    # Create a MultiIndex for unique_records to match imputation_data_df
+    unique_records_multiindex = unique_records.set_index('Medical_Record').reindex(imputation_data_df.index.levels[0])
 
-# Save the DataFrame to a CSV file
-imputation_data_df.to_csv(f'imputation_data_df_{CURRENT_TIME}.csv')
+    # Now assign the cluster based on the reindexed unique_records
+    imputation_data_df['cluster'] = unique_records_multiindex['Cluster'].values.repeat(MAX_DAYINCYCLE)
 
-# Plot data (optional)
-# plot_data(pivoted_data)
+    # Save the DataFrame to a CSV file
+    imputation_data_df.to_csv(f'imputation_data_df_{CURRENT_TIME}.csv')
 
-logging.info("Training completed and data saved.")
+    # Plot data (optional)
+    # plot_data(pivoted_data)
+
+    logging.info("Training completed and data saved.")

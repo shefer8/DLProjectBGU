@@ -9,13 +9,11 @@ The implementation of VaDER for the partially-observed time-series clustering ta
 
 import os
 from typing import Union, Optional
-
 import numpy as np
 import torch
 from scipy.stats import multivariate_normal
 from sklearn.mixture import GaussianMixture
 from torch.utils.data import DataLoader
-
 # from .data import DatasetForVaDER
 from core_modified import inverse_softplus, _VaDER
 # from ..base import BaseNNClusterer
@@ -27,6 +25,7 @@ from pypots.clustering.base import BaseNNClusterer
 from pypots.optim.adam import Adam
 from pypots.optim.base import Optimizer
 from pypots.utils.logging import logger
+from hyperparameter_tuning import *
 
 try:
     import nni
@@ -185,6 +184,11 @@ class VaDER(BaseNNClusterer):
         self.best_loss = float("inf")
         self.best_model_dict = None
 
+        #hadas
+        # Initializing loss lists
+        training_losses = []
+        validation_losses = []
+
         # pretrain to initialize parameters of GMM layer
         pretraining_step = 0
         for epoch in range(self.pretrain_epochs):
@@ -308,12 +312,18 @@ class VaDER(BaseNNClusterer):
                 # mean training loss of the current epoch
                 mean_train_loss = np.mean(epoch_train_loss_collector)
 
+
                 loss_values_means_string = (
                     f"Reconstruction Loss = {loss_values['reconstruction_loss']}, "
                     f"Loss 1 = {loss_values['latent_loss1']}, "
                     f"Loss 2 = {loss_values['latent_loss2']}, "
                     f"Loss 3 = {loss_values['latent_loss3']}"
                 )
+
+
+                training_losses.append(mean_train_loss) #hadas
+
+
                 if val_loader is not None:
                     self.model.eval()
                     epoch_val_loss_collector = []
@@ -326,6 +336,7 @@ class VaDER(BaseNNClusterer):
                             )
 
                     mean_val_loss = np.mean(epoch_val_loss_collector)
+                    validation_losses.append(mean_val_loss) #hadas
 
                     # save validation loss logs into the tensorboard file for every epoch if in need
                     if self.summary_writer is not None:
@@ -376,6 +387,8 @@ class VaDER(BaseNNClusterer):
                         "Exceeded the training patience. Terminating the training procedure..."
                     )
                     break
+
+            plot_epoch_loss(training_losses, validation_losses) #hadas
 
         except KeyboardInterrupt:  # if keyboard interrupt, only warning
             logger.warning("‼️ Training got interrupted by the user. Exist now ...")
@@ -506,7 +519,7 @@ class VaDER(BaseNNClusterer):
                     # the covariance matrix is diagonal, so we can just take the product
                     return np.log(1e-9 + phi_) + np.log(
                         1e-9
-                        + multivariate_normal.pdf(mu_t_, mean=mu_, cov=np.diag(stddev_))
+                        + multivariate_normal.pdf(mu_t_, mean=mu_, cov=np.diag(stddev_), allow_singular=True) #hadas
                     )
 
                 p = np.array(
