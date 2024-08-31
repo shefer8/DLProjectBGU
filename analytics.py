@@ -1,12 +1,10 @@
 import importlib
 import inspect
 import logging
-import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from config import *
-from sklearn.preprocessing import StandardScaler
+
 
 def plot_histogram_of_records_per_day(data, hormone):
     # Plot histogram
@@ -18,7 +16,7 @@ def plot_histogram_of_records_per_day(data, hormone):
     plt.xlabel('DayInCycle')
     plt.ylabel(f'Number of {hormone} values')
     plt.title(f'Number of {hormone} values per DayInCycle normalized')
-    # plt.show() #hadas
+    plt.show()
 
 def plot_one_hormone(pivoted_data, data_array, hormone, hormone_number):
     xlabel = 'DayInCycle'
@@ -55,7 +53,7 @@ def plot_data(pivoted_data):
         plot_one_hormone(pivoted_data, data_array, 'LH', 2)
 
     plt.tight_layout()
-    # plt.show() #hadas
+    plt.show()
 
 
 # for logging config global parameters
@@ -127,7 +125,9 @@ def print_data_statistics(data):
     # plt.ylabel('Number of Medical Records')
     # plt.xticks(range(1, 18))
 
-    plt.tight_layout()
-    # plt.show() #hadas
+    #plt.tight_layout()
+    # plt.show()
+
+
 
 

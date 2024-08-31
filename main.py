@@ -2,18 +2,13 @@ import os
 import pickle
 import random
 import time
-
 import tensorflow as tf
 import torch
-
 from Evaluation import *
-# from pypots.clustering.vader import VaDER
-from analytics import *
-from dl_project.model_modified import VaDER
+from model_modified import VaDER
 from utils import *
 from config import *  # Import global parameters
-
-from hyperparameter_tuning import *
+from sklearn.model_selection import train_test_split
 
 pd.reset_option('display.max_columns')
 
@@ -76,7 +71,9 @@ check_for_nan(data_array)
 # Scale the data (with the intialized values)
 # Normalize the data
 if NORMALIZATION_METHOD is not None:
-    data_array = normalize_data(data_array, method=NORMALIZATION_METHOD)
+    #data_array = normalize_data(data_array, method=NORMALIZATION_METHOD)
+    data_array = normalize_data(data_array, method='baseline_correction_and_z_score')
+    mask = np.isnan(data_array).astype(int)
 
 # Prepare the data in the expected format
 dataset = {'X': data_array, 'missing_mask': mask}
@@ -119,8 +116,13 @@ else:
                       epochs=EPOCHS, gmm_means = gmm_means, gmm_covs=gmm_covariances) #,saving_path = f'run_of_{CURRENT_TIME}'
 
 
+        X_train, X_val, mask_train, mask_val = train_test_split(data_array, mask, test_size=0.2, random_state=42)
+
+        train_set = {'X': X_train, 'missing_mask': mask_train}
+        val_set = {'X': X_val, 'missing_mask': mask_val}
+
         # Fit the VaDER model
-        vader.fit(dataset)
+        vader.fit(train_set, val_set)
 
 
         # Save the fitted model to disk
@@ -132,12 +134,12 @@ else:
 # Predict the imputed data
 try:
     imputed_data = vader.predict(dataset, return_latent_vars = True)
-    if imputed_data is None: #hadas
-        raise ValueError("Prediction failed, `imputed_data` is None.")#hadas
+    if imputed_data is None:
+        raise ValueError("Prediction failed, `imputed_data` is None.")
 except AssertionError as e:
     logging.error(f"AssertionError during prediction: {e}")
     print(f"AssertionError during prediction: {e}")
-    imputed_data = None #hadas
+    imputed_data = None
 
 
 # Extract the cluster labels from the 'clustering' key
@@ -155,7 +157,7 @@ print(f"Labels: {labels}")
 # Ensure that labels is a 1D array before passing it to the function
 if labels.ndim != 1:
     raise ValueError(f"Expected labels to be a 1D array, but got shape {labels.shape}")
-#hadas
+
 ground_truth = None  # Replace with actual ground truth if available
 # Evaluate clustering
 evaluation_results = evaluate_clustering(dataset, labels, ground_truth)
@@ -163,9 +165,9 @@ print(evaluation_results)
 logging.info(f"Clustering Evaluation Results:\n{evaluation_results}")
 
 # Extract and print cluster assignments
-if imputed_data is not None: #hadas
+if imputed_data is not None:
     # Evaluate normalization
-    #if NORMALIZE_DATA: evaluate_normalization(normalized_array=imputed_data, original_array=dataset) # hadas
+    #if NORMALIZE_DATA: evaluate_normalization(normalized_array=imputed_data, original_array=dataset)
     if 'clustering' in imputed_data:
         cluster_assignments = imputed_data['clustering']
         print("Cluster assignments (first 5):", cluster_assignments[:5])

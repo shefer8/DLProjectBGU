@@ -14,18 +14,15 @@ import torch
 from scipy.stats import multivariate_normal
 from sklearn.mixture import GaussianMixture
 from torch.utils.data import DataLoader
-# from .data import DatasetForVaDER
 from core_modified import inverse_softplus, _VaDER
-# from ..base import BaseNNClusterer
-# from ...optim.adam import Adam
-# from ...optim.base import Optimizer
-# from ...utils.logging import logger
 from pypots.clustering.vader.data import DatasetForVaDER
 from pypots.clustering.base import BaseNNClusterer
 from pypots.optim.adam import Adam
 from pypots.optim.base import Optimizer
 from pypots.utils.logging import logger
 from hyperparameter_tuning import *
+from sklearn.model_selection import train_test_split
+
 
 try:
     import nni
@@ -109,7 +106,7 @@ class VaDER(BaseNNClusterer):
         epochs: int = 100,
         pretrain_epochs: int = 10,
         patience: Optional[int] = None,
-        optimizer: Optional[Optimizer] = Adam(),
+        optimizer: Optional[Optimizer] = Adam(lr= 0.0001),
         num_workers: int = 0,
         device: Optional[Union[str, torch.device, list]] = None,
         saving_path: str = None,
@@ -184,7 +181,7 @@ class VaDER(BaseNNClusterer):
         self.best_loss = float("inf")
         self.best_model_dict = None
 
-        #hadas
+
         # Initializing loss lists
         training_losses = []
         validation_losses = []
@@ -321,7 +318,7 @@ class VaDER(BaseNNClusterer):
                 )
 
 
-                training_losses.append(mean_train_loss) #hadas
+                training_losses.append(mean_train_loss)
 
 
                 if val_loader is not None:
@@ -336,7 +333,8 @@ class VaDER(BaseNNClusterer):
                             )
 
                     mean_val_loss = np.mean(epoch_val_loss_collector)
-                    validation_losses.append(mean_val_loss) #hadas
+                    validation_losses.append(mean_val_loss)
+                    logger.info(f"Epoch {epoch}: Validation Loss = {mean_val_loss}, Best Loss = {self.best_loss}")
 
                     # save validation loss logs into the tensorboard file for every epoch if in need
                     if self.summary_writer is not None:
@@ -363,13 +361,20 @@ class VaDER(BaseNNClusterer):
                         f"‼️ Attention: got NaN loss in Epoch {epoch}. This may lead to unexpected errors."
                     )
 
+
                 if mean_loss < self.best_loss:
                     self.best_epoch = epoch
                     self.best_loss = mean_loss
                     self.best_model_dict = self.model.state_dict()
                     self.patience = self.original_patience
                 else:
+                    logger.info(
+                        f"Epoch {epoch}: No Improvement. Patience Decreased from {self.patience} to {self.patience - 1}")
                     self.patience -= 1
+                    if self.patience <= 0:
+                        logger.info(f"Epoch {epoch}: Patience exhausted. Early stopping triggered.")
+                        self.model.load_state_dict(self.best_model_dict)
+                        break
 
                 # save the model if necessary
                 self._auto_save_model_if_necessary(
@@ -388,7 +393,7 @@ class VaDER(BaseNNClusterer):
                     )
                     break
 
-            plot_epoch_loss(training_losses, validation_losses) #hadas
+            plot_epoch_loss(training_losses, validation_losses)
 
         except KeyboardInterrupt:  # if keyboard interrupt, only warning
             logger.warning("‼️ Training got interrupted by the user. Exist now ...")
@@ -419,26 +424,35 @@ class VaDER(BaseNNClusterer):
         file_type: str = "hdf5",
     ) -> None:
         # Step 1: wrap the input data with classes Dataset and DataLoader
-        training_set = DatasetForVaDER(train_set, return_y=False, file_type=file_type)
-        assert not np.isnan(np.sum(train_set['X'])), "NaNs found in the training data"
-        # assert not np.isnan(np.sum(val_set['X'])), "NaNs found in the validation data"
+        if isinstance(train_set, dict):
+            train_data = train_set['X']
+            train_mask = train_set['missing_mask']
+        else:
+            raise ValueError("train_set must be a dictionary containing 'X' and 'missing_mask'.")
+
+        if isinstance(val_set, dict):
+            val_data = val_set['X']
+            val_mask = val_set['missing_mask']
+        else:
+            val_data = None
+            val_mask = None
 
         training_loader = DataLoader(
-            training_set,
+            DatasetForVaDER({'X': train_data, 'missing_mask': train_mask}, return_y=False, file_type=file_type),
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
         )
 
-        val_loader = None
-        if val_set is not None:
-            val_set = DatasetForVaDER(val_set, return_y=False, file_type=file_type)
+        if val_data is not None:
             val_loader = DataLoader(
-                val_set,
+                DatasetForVaDER({'X': val_data, 'missing_mask': val_mask}, return_y=False, file_type=file_type),
                 batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.num_workers,
             )
+        else:
+            val_loader = None
 
         # Step 2: train the model and freeze it
         self._train_model(training_loader, val_loader)
@@ -519,7 +533,7 @@ class VaDER(BaseNNClusterer):
                     # the covariance matrix is diagonal, so we can just take the product
                     return np.log(1e-9 + phi_) + np.log(
                         1e-9
-                        + multivariate_normal.pdf(mu_t_, mean=mu_, cov=np.diag(stddev_), allow_singular=True) #hadas
+                        + multivariate_normal.pdf(mu_t_, mean=mu_, cov=np.diag(stddev_), allow_singular=True)
                     )
 
                 p = np.array(
@@ -583,3 +597,5 @@ class VaDER(BaseNNClusterer):
 
         result_dict = self.predict(test_set, file_type=file_type)
         return result_dict["clustering"]
+
+

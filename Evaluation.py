@@ -56,16 +56,6 @@ def evaluate_normalization(normalized_array, original_array):
     print(f"Normalized Variance: {normalized_variance:.4f}")
 
 
-
-
-# Evaluate clustering quality
-#def evaluate_clustering(data_array, n_clusters=3):
-    #new = data_array.reshape(-1, data_array.shape[-1])
-    #kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    #cluster_labels = kmeans.fit_predict(new)
-    #silhouette_avg = silhouette_score(new, cluster_labels)
-    #return silhouette_avg
-
 # Evaluate clustering quality
 def evaluate_clustering(data, labels, ground_truth=None):
     """

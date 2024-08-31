@@ -18,5 +18,5 @@ N_FEATURES = 3 if WITH_LH else 2 # Number of features (Estrogen, LH, Prog
 N_CLUSTERS = 3  # Example number of clusters
 RNN_HIDDEN_SIZE = 32 # 64  # Size of the RNN hidden state
 D_MU_STDDEV = 12 #MAX_DAYINCYCLE - MIN_DAYINCYCLE + 2  # Latent dimension # 12
-EPOCHS = 30
+EPOCHS = 10
 
